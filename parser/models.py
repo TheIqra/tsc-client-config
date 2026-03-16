@@ -248,6 +248,42 @@ class ChannelConfig(models.Model):
  
     def __str__(self):
         return f"Config → {self.client}"
+    
+    @staticmethod                                   # ← Fix 1: was missing, cfg != self
+    def channel_config_to_msg_items(cfg: "ChannelConfig") -> list[tuple]:
+        """
+        Convert a ChannelConfig instance into the msg_items list that
+        preprocess_text() and route_signal() expect.
+
+        Index layout (only the indices the parser actually reads matter):
+        0-4   → signal keyword substitutions  (preprocess_text og_text_indices)
+        22-26 → reply keyword substitutions   (preprocess_text og_text_indices)  ← Fix 2
+        29-37 → routing flags                 (route_signal)
+        5-21, 27-28 → unused padding
+        """
+        return [
+            (" BUY",         cfg.kw_buy),           # 0  signal keyword
+            (" SELL",        cfg.kw_sell),           # 1  signal keyword
+            (" SELL",        ""),                    # 2  placeholder
+            ("SL",           cfg.kw_sl),             # 3  signal keyword
+            ("TP",           cfg.kw_tp),             # 4  signal keyword
+            *[("", "")] * 17,                        # 5-21  unused (never read)
+            ("TP1 HIT",      cfg.kw_close_tp1),      # 22  reply keyword ← now readable
+            ("TP2 HIT",      cfg.kw_close_tp2),      # 23  reply keyword
+            ("TP3 HIT",      cfg.kw_close_tp3),      # 24  reply keyword
+            ("TP4 HIT",      cfg.kw_close_tp4),      # 25  reply keyword
+            ("CLFL",         cfg.kw_close_full),     # 26  reply keyword
+            *[("", "")] * 2,                         # 27-28  unused
+            ("PREFERENTRY",  str(cfg.prefer_entry)), # 29
+            ("SLINPIPS",     cfg.sl_in_pips),        # 30
+            ("TPINPIPS",     cfg.tp_in_pips),        # 31
+            ("READIMAGE",    cfg.read_image),        # 32
+            ("DELIMITERS",   cfg.delimiters),        # 33
+            ("ALLORDER",     cfg.all_order),         # 34
+            ("AI",           cfg.use_ai),            # 35
+            ("READFORWARDED",cfg.read_forwarded),    # 36
+            ("NEWSFILTER",   cfg.news_filter),       # 37
+        ]
  
  
 # ===========================================================================
