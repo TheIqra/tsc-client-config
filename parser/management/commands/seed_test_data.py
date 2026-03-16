@@ -30,14 +30,8 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 # ── Model imports ─────────────────────────────────────────────────────────────
-# Adjust the import path to match your actual app label.
-from parser.models import (   # ← change "signal_app" to your app name
-    ChannelConfig,
-    ClientConfig,
-    ParsedSignal,
-    TakeProfit,
-    WebhookMessage,
-)
+from client.models import ClientConfig, WebhookMessage
+from parser.models import ChannelConfig, ParsedSignal, TakeProfit
 
 
 # =============================================================================

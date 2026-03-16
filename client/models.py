@@ -25,24 +25,33 @@ class ClientConfig(models.Model):
 	def __str__(self):
 		return f"{self.client_id} ({self.telegram_number})"
 
+
 class WebhookMessage(models.Model):
-    client = models.ForeignKey(ClientConfig, on_delete=models.CASCADE, related_name='webhook_messages')
+	"""
+	Raw Telegram message received via webhook.
+	Linked to a ClientConfig by FK so we can always trace back to the channel.
+	"""
+	client = models.ForeignKey(
+		ClientConfig,
+		on_delete=models.CASCADE,
+		related_name='webhook_messages',
+	)
 
-    message_id = models.CharField(max_length=255, db_index=True)
-    text = models.TextField(blank=True)
-    replied_message_id = models.CharField(max_length=255, blank=True)
-    replied_text = models.TextField(blank=True)
-    is_forwarded = models.BooleanField(default=False)
-    is_edited = models.BooleanField(default=False)
+	message_id = models.CharField(max_length=255, db_index=True)
+	text = models.TextField(blank=True)
+	replied_message_id = models.CharField(max_length=255, blank=True)
+	replied_text = models.TextField(blank=True)
+	is_forwarded = models.BooleanField(default=False)
+	is_edited = models.BooleanField(default=False)
 
-    received_at = models.DateTimeField(auto_now_add=True)
+	received_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        indexes = [
-            models.Index(fields=["client", "message_id"]),
-            models.Index(fields=["client", "received_at"]),
-        ]
-        ordering = ["-received_at"]
+	class Meta:
+		indexes = [
+			models.Index(fields=["client", "message_id"]),
+			models.Index(fields=["client", "received_at"]),
+		]
+		ordering = ["-received_at"]
 
-    def __str__(self):
-        return f"{self.client.client_id} - {self.message_id}"
+	def __str__(self):
+		return f"{self.client.client_id} - {self.message_id}"

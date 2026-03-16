@@ -2,38 +2,10 @@ from django.db import models
 
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
-from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from client.models import ClientConfig, WebhookMessage
-
-
-class WebhookMessage(models.Model):
-	client_id = models.CharField(max_length=100, db_index=True)
-	telegram_number = models.CharField(max_length=20, db_index=True)
-	channel_id = models.CharField(max_length=100, db_index=True)
-	broker_account_number = models.CharField(max_length=50, db_index=True)
-	broker_server = models.CharField(max_length=100, db_index=True)
-
-	message_id = models.CharField(max_length=255, db_index=True)
-	text = models.TextField(blank=True)
-	replied_message_id = models.CharField(max_length=255, blank=True)
-	replied_text = models.TextField(blank=True)
-	is_forwarded = models.BooleanField(default=False)
-	is_edited = models.BooleanField(default=False)
-
-	received_at = models.DateTimeField(auto_now_add=True)
-
-	class Meta:
-		indexes = [
-			models.Index(fields=["client_id", "message_id"]),
-			models.Index(fields=["channel_id", "message_id"]),
-			models.Index(fields=["received_at"]),
-		]
-		ordering = ["-received_at"]
-
-	def __str__(self):
-		return f"{self.client_id} - {self.message_id}"
+# WebhookMessage is canonical in client.models; import it here for FK references
+from client.models import ClientConfig, WebhookMessage  # noqa: F401
 
 
 
@@ -119,20 +91,19 @@ class ChannelConfig(models.Model):
  
     # ── Tab 1 · Signal Keywords ─────────────────────────────────────────────
  
-    kw_entry_point  = models.CharField(max_length=200, blank=True, default="",
+    kw_entry_point  = models.CharField(max_length=200, blank=True, default="ENTRY",
         verbose_name=_("Entry Point"),
-        help_text=_("Word provider uses for entry price (e.g. OPEN). "
-                    "Blank = auto-detect."))
-    kw_buy          = models.CharField(max_length=200, blank=True, default="",
+        help_text=_("Word provider uses for entry price. Default: ENTRY."))
+    kw_buy          = models.CharField(max_length=200, blank=True, default="LONG",
         verbose_name=_("BUY aliases"),
         help_text=_("Comma-separated aliases (e.g. LONG,B)."))
-    kw_sell         = models.CharField(max_length=200, blank=True, default="",
+    kw_sell         = models.CharField(max_length=200, blank=True, default="SHORT",
         verbose_name=_("SELL aliases"),
         help_text=_("Comma-separated aliases (e.g. SHORT,S)."))
-    kw_sl           = models.CharField(max_length=200, blank=True, default="",
+    kw_sl           = models.CharField(max_length=200, blank=True, default="SL",
         verbose_name=_("SL aliases"),
         help_text=_("Comma-separated aliases (e.g. STOP,STOP-LOSS)."))
-    kw_tp           = models.CharField(max_length=200, blank=True, default="",
+    kw_tp           = models.CharField(max_length=200, blank=True, default="TP",
         verbose_name=_("TP aliases"),
         help_text=_("Comma-separated aliases (e.g. TARGET,PROFIT)."))
     kw_market_order = models.CharField(max_length=200, blank=True, default="",
@@ -215,7 +186,7 @@ class ChannelConfig(models.Model):
  
     prefer_entry   = models.IntegerField(
         choices=PreferEntry.choices,
-        default=PreferEntry.FIRST,
+        default=PreferEntry.AVERAGE,   # default = 2 (average of range)
         verbose_name=_("Prefer Entry"),
         help_text=_("Which price to use when a range is given (e.g. 2330/2335)."),
     )

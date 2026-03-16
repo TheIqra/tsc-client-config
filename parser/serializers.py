@@ -1,68 +1,34 @@
 from rest_framework import serializers
-from .models import *
+
+# Import models from their canonical locations.
+# parser.models no longer defines its own WebhookMessage — the canonical
+# one lives in client.models (FK → ClientConfig).
+from client.models import ClientConfig, WebhookMessage
+from .models import ChannelConfig, ParsedSignal, TakeProfit
 from .parser import preprocess_text, route_signal
-
-class WebhookMessageSerializer(serializers.ModelSerializer):
-	class Meta:
-		model = WebhookMessage
-		fields = [
-			"id",
-			"client_id",
-			"telegram_number",
-			"channel_id",
-			"broker_account_number",
-			"broker_server",
-			"message_id",
-			"text",
-			"replied_message_id",
-			"replied_text",
-			"is_forwarded",
-			"is_edited",
-			"received_at",
-		]
-		read_only_fields = ["id", "received_at"]
-
-	def validate(self, attrs):
-		for field in [
-			"client_id",
-			"telegram_number",
-			"channel_id",
-			"broker_account_number",
-			"broker_server",
-			"message_id",
-			"text",
-			"replied_message_id",
-			"replied_text",
-		]:
-			value = attrs.get(field)
-			if isinstance(value, str):
-				attrs[field] = value.strip()
-		return attrs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ChannelConfigSerializer  (create / read / update keyword config)
 # ─────────────────────────────────────────────────────────────────────────────
- 
+
 class ChannelConfigSerializer(serializers.ModelSerializer):
     """
     Full serializer for ChannelConfig.
- 
+
     ``client_id`` is exposed as a read-only string sourced from the related
     ClientConfig so the API response is self-contained.
- 
+
     The ``client`` FK is intentionally excluded from writable fields —
     it is injected by the view's ``perform_create()`` so the client is always
     determined by the URL parameter, never by the request body.
     """
- 
+
     # Read-only identity field sourced from the FK
     client_id = serializers.CharField(source="client.client_id", read_only=True)
- 
+
     class Meta:
         model  = ChannelConfig
-        # Expose every keyword + behaviour field.
-        # client_id is read-only (set by URL); client FK is excluded.
         fields = [
             "client_id",
             # Tab 1 – Signal Keywords
@@ -109,7 +75,7 @@ class ChannelConfigSerializer(serializers.ModelSerializer):
             "news_filter",
         ]
         read_only_fields = ["client_id"]
- 
+
     def validate_delimiters(self, value: str) -> str:
         """Delimiters must be exactly 2 characters or empty."""
         value = value.strip()
@@ -118,7 +84,7 @@ class ChannelConfigSerializer(serializers.ModelSerializer):
                 "Delimiters must be exactly 2 characters (e.g. '[]') or left blank."
             )
         return value
- 
+
     def validate(self, attrs):
         """Normalise all keyword fields: strip whitespace, uppercase."""
         keyword_fields = [
@@ -136,14 +102,15 @@ class ChannelConfigSerializer(serializers.ModelSerializer):
                 attrs[field] = value.strip().upper()
         return attrs
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
- 
+
 def _build_signal_keywords(cfg: ChannelConfig) -> set[str]:
     """
     Derive the BUY/SELL keyword set from ChannelConfig aliases.
- 
+
     The canonical internal keywords are always included.  Any extra aliases
     stored in kw_buy / kw_sell (comma-separated) are added on top so that
     a provider spelling like LONG or SHORT is also detected.
@@ -155,20 +122,20 @@ def _build_signal_keywords(cfg: ChannelConfig) -> set[str]:
             if item:
                 keywords.add(item)
     return keywords
- 
- 
+
+
 def _persist_parsed_results(
     results: list[dict],
-    message,              # WebhookMessage instance
+    message,              # client.models.WebhookMessage instance
 ) -> list[ParsedSignal]:
     """
     Persist every result dict returned by route_signal() as a
     ParsedSignal row with its child TakeProfit rows.
- 
+
     Returns the list of created ParsedSignal instances.
     """
     created: list[ParsedSignal] = []
- 
+
     for res in results:
         # Create the ParsedSignal row
         signal = ParsedSignal.objects.create(
@@ -183,11 +150,11 @@ def _persist_parsed_results(
             command_text = res["command"],
             status       = ParsedSignal.Status.PENDING,
         )
- 
+
         # Create original TP rows (from open/edit signals)
         for order, value in enumerate(res.get("tps", []), start=1):
             signal.add_tp(value=value, order=order)
- 
+
         # Create edit-target TP rows (from update commands)
         for order, value in enumerate(res.get("new_tps", []), start=1):
             TakeProfit.objects.create(
@@ -196,61 +163,62 @@ def _persist_parsed_results(
                 value          = value,
                 is_edit_target = True,
             )
- 
+
         created.append(signal)
- 
+
     return created
- 
- 
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 1.  TakeProfitSerializer  (read-only)
 # ─────────────────────────────────────────────────────────────────────────────
- 
+
 class TakeProfitSerializer(serializers.ModelSerializer):
     """
     Read-only representation of a single TP level.
- 
+
     ``label`` is a computed property (TP1, TP2, …) exposed as a read-only
     field so API consumers can display it without computing it themselves.
     """
- 
+
     label = serializers.CharField(read_only=True)
- 
+
     class Meta:
         model  = TakeProfit
         fields = ["order", "value", "label", "hit_at", "is_edit_target"]
- 
- 
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 2.  ParsedSignalSerializer  (read-only)
 # ─────────────────────────────────────────────────────────────────────────────
- 
+
 class ParsedSignalSerializer(serializers.ModelSerializer):
     """
     Read-only serializer for a ParsedSignal row.
- 
+
     Schema mirrors the route_signal() result dict exactly so that API
     consumers see the same shape regardless of whether they call to_json()
     or this serializer.
- 
+
     ``tps``      – original TP rows (is_edit_target=False), ordered by order
     ``new_tps``  – edit-target TP rows (is_edit_target=True), ordered by order
-    ``msg_id``   – sourced from the related WebhookMessage
+    ``msg_id``   – sourced from the related WebhookMessage (client.models)
     ``channel_id``, ``channel`` – sourced from WebhookMessage → ClientConfig
     """
- 
+
     # Nested TPs split by purpose
     tps = serializers.SerializerMethodField()
     new_tps = serializers.SerializerMethodField()
- 
+
     # Flatten FK traversals into flat fields (mirrors to_json() keys)
-    msg_id     = serializers.CharField(source="message.message_id", read_only=True)
-    channel_id = serializers.CharField(source="message.client.channel_id", read_only=True)
-    channel    = serializers.CharField(source="message.client.client_id",  read_only=True)
- 
+    # WebhookMessage now has a FK `client` → ClientConfig
+    msg_id     = serializers.CharField(source="message.message_id",           read_only=True)
+    channel_id = serializers.CharField(source="message.client.channel_id",    read_only=True)
+    channel    = serializers.CharField(source="message.client.client_id",     read_only=True)
+
     # command is stored in command_text on the model; expose as "command"
     command = serializers.CharField(source="command_text", read_only=True)
- 
+
     class Meta:
         model  = ParsedSignal
         fields = [
@@ -273,64 +241,87 @@ class ParsedSignalSerializer(serializers.ModelSerializer):
             "parsed_at",
         ]
         read_only_fields = fields  # entire serializer is read-only
- 
+
     def get_tps(self, obj: ParsedSignal) -> list[dict]:
         qs = obj.take_profits.filter(is_edit_target=False).order_by("order")
         return TakeProfitSerializer(qs, many=True).data
- 
+
     def get_new_tps(self, obj: ParsedSignal) -> list[dict]:
         qs = obj.take_profits.filter(is_edit_target=True).order_by("order")
         return TakeProfitSerializer(qs, many=True).data
- 
- 
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 3.  ParseSignalInputSerializer  (write — triggers parsing)
 # ─────────────────────────────────────────────────────────────────────────────
- 
+
 class ParseSignalInputSerializer(serializers.Serializer):
     """
     Accepts a reference to an existing WebhookMessage and triggers the
     full parser pipeline, persisting the results as ParsedSignal rows.
- 
+
     Input fields
     ------------
+    client_id   : ClientConfig.client_id
     message_id  : Telegram message ID string  (from WebhookMessage.message_id)
-    client_id   : ClientConfig.client_id      (used to disambiguate messages)
- 
-    Both fields together uniquely identify the WebhookMessage to parse.
- 
+
+    Both fields together uniquely identify the WebhookMessage to parse
+    (via the FK client__client_id + message_id lookup).
+
     Optional overrides
     ------------------
     force_reparse : bool (default False)
         When True, delete any existing ParsedSignal rows for this message
         before parsing.  Useful for re-processing after a config change.
- 
+
     Output
     ------
-    Call .save() after .is_valid().  Returns a list of ParsedSignal instances
-    via the ``parsed_signals`` attribute set after save().
+    Call .save() after .is_valid().  Returns a list of ParsedSignal instances.
     """
- 
-    message_id   = serializers.CharField()
-    client_id    = serializers.CharField()
+
+    message_id    = serializers.CharField()
+    client_id     = serializers.CharField()
     force_reparse = serializers.BooleanField(default=False, required=False)
- 
+
     # Set by validate(); consumed by save()
     _message         = None
     _channel_config  = None
- 
+
     def validate(self, attrs):
         client_id  = attrs["client_id"].strip()
         message_id = attrs["message_id"].strip()
- 
-        # ── Resolve WebhookMessage ────────────────────────────────────────────
-        from .models import WebhookMessage  # local import avoids circular
- 
+
+        # ── Resolve ClientConfig ──────────────────────────────────────────────
         try:
-            message = WebhookMessage.objects.select_related(
-                "client",
-                "client__channel_config",
-            ).get(
+            client_cfg = ClientConfig.objects.get(client_id=client_id)
+        except ClientConfig.DoesNotExist:
+            raise serializers.ValidationError(
+                {
+                    "client_id": (
+                        f"ClientConfig '{client_id}' does not exist. "
+                        "Create one before parsing."
+                    )
+                }
+            )
+
+        # ── Resolve ChannelConfig ─────────────────────────────────────────────
+        try:
+            channel_config = client_cfg.channel_config
+        except ChannelConfig.DoesNotExist:
+            raise serializers.ValidationError(
+                {
+                    "client_id": (
+                        f"Client '{client_id}' has no ChannelConfig. "
+                        "Create one before parsing."
+                    )
+                }
+            )
+
+        # ── Resolve WebhookMessage (FK lookup — no MultipleObjectsReturned) ───
+        # client.models.WebhookMessage uses a FK to ClientConfig, so the
+        # lookup is client__client_id + message_id which is always unique.
+        try:
+            message = WebhookMessage.objects.select_related("client").get(
                 client__client_id=client_id,
                 message_id=message_id,
             )
@@ -343,18 +334,16 @@ class ParseSignalInputSerializer(serializers.Serializer):
                     )
                 }
             )
- 
-        # ── Resolve ChannelConfig ─────────────────────────────────────────────
-        if not hasattr(message.client, "channel_config"):
-            raise serializers.ValidationError(
-                {
-                    "client_id": (
-                        f"Client '{client_id}' has no ChannelConfig. "
-                        "Create one before parsing."
-                    )
-                }
+        except WebhookMessage.MultipleObjectsReturned:
+            # Safety net: if duplicates somehow exist, use the latest one.
+            message = (
+                WebhookMessage.objects
+                .select_related("client")
+                .filter(client__client_id=client_id, message_id=message_id)
+                .order_by("-received_at")
+                .first()
             )
- 
+
         # ── Guard: already parsed? ────────────────────────────────────────────
         if not attrs.get("force_reparse"):
             existing = message.parsed_signals.exists()
@@ -367,33 +356,35 @@ class ParseSignalInputSerializer(serializers.Serializer):
                         )
                     }
                 )
- 
+
         self._message        = message
-        self._channel_config = message.client.channel_config
+        self._channel_config = channel_config
         return attrs
- 
+
     def save(self, **kwargs) -> list[ParsedSignal]:
         """
         Run the parser pipeline and persist results.
- 
+
         Returns a list of ParsedSignal instances (may be empty if the
         message contains no actionable signal — e.g. pure text with no
         BUY/SELL keyword).
+
+        Raises ValidationError if an 'open' signal produces no valid symbol.
         """
         message = self._message
         cfg     = self._channel_config
- 
+
         # Delete previous results if force_reparse was requested
         if self.validated_data.get("force_reparse"):
             message.parsed_signals.all().delete()
- 
+
         # ── Build parser inputs from ChannelConfig ────────────────────────────
         msg_items       = ChannelConfig.channel_config_to_msg_items(cfg)
         signal_keywords = _build_signal_keywords(cfg)
- 
-        raw_text      = message.text or ""
-        replied_raw   = message.replied_text or None
- 
+
+        raw_text    = message.text or ""
+        replied_raw = message.replied_text or None
+
         # ── Pre-process: keyword substitution + delimiter removal ─────────────
         processed_text = preprocess_text(raw_text, msg_items)
         processed_replied = (
@@ -401,7 +392,7 @@ class ParseSignalInputSerializer(serializers.Serializer):
             if replied_raw
             else None
         )
- 
+
         # ── Route and dispatch ────────────────────────────────────────────────
         results = route_signal(
             text            = processed_text,
@@ -412,7 +403,22 @@ class ParseSignalInputSerializer(serializers.Serializer):
             signal_keywords = signal_keywords,
             replied_text    = processed_replied,
         )
- 
+
+        # ── Validate: 'open' signals must have a resolved symbol ──────────────
+        for res in results:
+            if res["kind"] == "open":
+                symbol = (res.get("symbol") or "").strip()
+                if not symbol or symbol == "no_pair":
+                    raise serializers.ValidationError(
+                        {
+                            "symbol": (
+                                "Could not resolve a trading symbol from the message text. "
+                                "Ensure the message contains a valid instrument symbol "
+                                "(e.g. XAUUSD, EURUSD) before opening a trade."
+                            )
+                        }
+                    )
+
         # ── Persist results ───────────────────────────────────────────────────
         self.parsed_signals = _persist_parsed_results(results, message)
         return self.parsed_signals
