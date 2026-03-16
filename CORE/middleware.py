@@ -14,6 +14,8 @@ class ApiKeyMiddleware:
 		self.get_response = get_response
 
 	def __call__(self, request):
+		request_path = request.path
+		exempt_prefixes = getattr(settings, "API_KEY_EXEMPT_PATH_PREFIXES", ())
 		provided_key = request.headers.get("X-API-KEY")
 		expected_key = getattr(settings, "X_API_KEY", None)
 
@@ -22,6 +24,21 @@ class ApiKeyMiddleware:
 			request.method,
 			request.get_full_path(),
 		)
+
+		if any(request_path.startswith(prefix) for prefix in exempt_prefixes):
+			logger.info(
+				"Bypassing API key check for exempt path method=%s path=%s",
+				request.method,
+				request.get_full_path(),
+			)
+			response = self.get_response(request)
+			logger.info(
+				"Outgoing response method=%s path=%s status=%s",
+				request.method,
+				request.get_full_path(),
+				response.status_code,
+			)
+			return response
 
 		if not provided_key:
 			logger.warning(
