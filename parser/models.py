@@ -82,11 +82,19 @@ class ChannelConfig(models.Model):
     Mirrors all three Config-Keyword tabs in the TSC desktop UI.
     """
  
-    client = models.OneToOneField(
+    client = models.ForeignKey(
         ClientConfig,
         on_delete=models.CASCADE,
-        related_name="channel_config",
-        primary_key=True,   # no extra id column – same PK as ClientConfig
+        related_name="configs",
+    )
+    
+    channel_id = models.CharField(
+        max_length=100, 
+        blank=True, 
+        default="",
+        db_index=True,
+        verbose_name=_("Channel ID"),
+        help_text=_("Telegram channel ID for this configuration.")
     )
  
     # ── Tab 1 · Signal Keywords ─────────────────────────────────────────────
@@ -216,9 +224,10 @@ class ChannelConfig(models.Model):
     class Meta:
         verbose_name        = _("Channel Config")
         verbose_name_plural = _("Channel Configs")
+        unique_together     = (("client", "channel_id"),)
  
     def __str__(self):
-        return f"Config → {self.client}"
+        return f"Config {self.channel_id} → {self.client}"
     
     @staticmethod                                   # ← Fix 1: was missing, cfg != self
     def channel_config_to_msg_items(cfg: "ChannelConfig") -> list[tuple]:

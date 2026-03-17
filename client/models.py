@@ -37,6 +37,7 @@ class WebhookMessage(models.Model):
 		related_name='webhook_messages',
 	)
 
+	channel_id = models.CharField(max_length=100, db_index=True, blank=True, null=True)
 	message_id = models.CharField(max_length=255, db_index=True)
 	text = models.TextField(blank=True)
 	replied_message_id = models.CharField(max_length=255, blank=True)

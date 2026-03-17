@@ -30,7 +30,9 @@ class ChannelConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model  = ChannelConfig
         fields = [
+            "id",
             "client_id",
+            "channel_id",
             # Tab 1 – Signal Keywords
             "kw_entry_point",
             "kw_buy",
@@ -304,19 +306,6 @@ class ParseSignalInputSerializer(serializers.Serializer):
                 }
             )
 
-        # ── Resolve ChannelConfig ─────────────────────────────────────────────
-        try:
-            channel_config = client_cfg.channel_config
-        except ChannelConfig.DoesNotExist:
-            raise serializers.ValidationError(
-                {
-                    "client_id": (
-                        f"Client '{client_id}' has no ChannelConfig. "
-                        "Create one before parsing."
-                    )
-                }
-            )
-
         # ── Resolve WebhookMessage (FK lookup — no MultipleObjectsReturned) ───
         # client.models.WebhookMessage uses a FK to ClientConfig, so the
         # lookup is client__client_id + message_id which is always unique.
@@ -342,6 +331,24 @@ class ParseSignalInputSerializer(serializers.Serializer):
                 .filter(client__client_id=client_id, message_id=message_id)
                 .order_by("-received_at")
                 .first()
+            )
+
+        # ── Resolve ChannelConfig ─────────────────────────────────────────────
+        try:
+            if message.channel_id:
+                channel_config = client_cfg.configs.get(channel_id=message.channel_id)
+            else:
+                channel_config = client_cfg.configs.first()
+                if not channel_config:
+                    raise ChannelConfig.DoesNotExist()
+        except ChannelConfig.DoesNotExist:
+            raise serializers.ValidationError(
+                {
+                    "client_id": (
+                        f"Client '{client_id}' has no ChannelConfig for channel '{message.channel_id}'. "
+                        "Create one before parsing."
+                    )
+                }
             )
 
         # ── Guard: already parsed? ────────────────────────────────────────────

@@ -31,7 +31,7 @@ class ClientConfigSerializer(serializers.ModelSerializer):
 
     # Lazy import inside property to avoid circular deps at module load time.
     # The actual field is injected dynamically below the class.
-    config = serializers.SerializerMethodField()
+    configs = serializers.SerializerMethodField()
 
     class Meta:
         model = ClientConfig
@@ -45,35 +45,39 @@ class ClientConfigSerializer(serializers.ModelSerializer):
             "is_active",
             "created_at",
             "updated_at",
-            "config",
+            "configs",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
-    # ── config field: read via SerializerMethodField so it always renders ─────
+    # ── configs field: read via SerializerMethodField so it always renders ─────
 
-    def get_config(self, obj: ClientConfig):
+    def get_configs(self, obj: ClientConfig):
         from parser.serializers import ChannelConfigSerializer
-        from parser.models import ChannelConfig
+        
+        cfg_qs = obj.configs.all()
+        return ChannelConfigSerializer(cfg_qs, many=True).data
 
-        cfg, _ = ChannelConfig.objects.get_or_create(client=obj)
-        return ChannelConfigSerializer(cfg).data
-
-    # ── config field: writable via to_internal_value override ────────────────
+    # ── configs field: writable via to_internal_value override ────────────────
 
     def to_internal_value(self, data):
         """
-        Allow ``config`` to be passed as a writable dict.
-        We pop it out before the standard field validation (which treats it
-        as read-only via SerializerMethodField) and stash it for use in
-        update()/create().
+        Allow ``configs`` to be passed as a writable list of dicts.
         """
-        config_data = data.pop("config", None) if isinstance(data, dict) else None
-        # data may be a QueryDict (immutable) — work on a plain dict copy
-        if hasattr(data, "dict"):
+        configs_data = data.pop("configs", None) if isinstance(data, dict) else None
+        
+        # fallback if they incorrectly sent a single dict as "configs" or "config"
+        if not configs_data and isinstance(data, dict) and "config" in data:
+            val = data.pop("config")
+            if isinstance(val, dict):
+                configs_data = [val]
+            elif isinstance(val, list):
+                configs_data = val
+
+        if isinstance(data, dict) and hasattr(data, "dict"):
             data = data.dict()
         ret = super().to_internal_value(data)
-        if config_data is not None:
-            ret["_config_data"] = config_data
+        if configs_data is not None:
+            ret["_configs_data"] = configs_data
         return ret
 
     def validate(self, attrs):
@@ -96,17 +100,20 @@ class ClientConfigSerializer(serializers.ModelSerializer):
         from parser.models import ChannelConfig
         from parser.serializers import ChannelConfigSerializer
 
-        config_data = validated_data.pop("_config_data", None)
+        configs_data = validated_data.pop("_configs_data", None)
         instance = super().create(validated_data)
 
-        # Auto-create ChannelConfig (with defaults)
-        cfg, _ = ChannelConfig.objects.get_or_create(client=instance)
-
-        # Apply any config fields supplied at creation time
-        if config_data:
-            cfg_ser = ChannelConfigSerializer(cfg, data=config_data, partial=True)
-            if cfg_ser.is_valid(raise_exception=True):
-                cfg_ser.save()
+        # Apply any configs supplied at creation time
+        if configs_data is not None and isinstance(configs_data, list):
+            for config_data in configs_data:
+                channel_id = config_data.get("channel_id", instance.channel_id)
+                cfg, _ = ChannelConfig.objects.get_or_create(client=instance, channel_id=channel_id)
+                cfg_ser = ChannelConfigSerializer(cfg, data=config_data, partial=True)
+                if cfg_ser.is_valid(raise_exception=True):
+                    cfg_ser.save()
+        else:
+            # Auto-create one default ChannelConfig
+            ChannelConfig.objects.get_or_create(client=instance, channel_id=instance.channel_id)
 
         return instance
 
@@ -116,17 +123,19 @@ class ClientConfigSerializer(serializers.ModelSerializer):
         from parser.models import ChannelConfig
         from parser.serializers import ChannelConfigSerializer
 
-        config_data = validated_data.pop("_config_data", None)
+        configs_data = validated_data.pop("_configs_data", None)
 
         # Update client identity fields
         instance = super().update(instance, validated_data)
 
-        # Update ChannelConfig if config data was supplied
-        if config_data is not None:
-            cfg, _ = ChannelConfig.objects.get_or_create(client=instance)
-            cfg_ser = ChannelConfigSerializer(cfg, data=config_data, partial=True)
-            if cfg_ser.is_valid(raise_exception=True):
-                cfg_ser.save()
+        # Update ChannelConfigs if configs data was supplied
+        if configs_data is not None and isinstance(configs_data, list):
+            for config_data in configs_data:
+                channel_id = config_data.get("channel_id", instance.channel_id)
+                cfg, _ = ChannelConfig.objects.get_or_create(client=instance, channel_id=channel_id)
+                cfg_ser = ChannelConfigSerializer(cfg, data=config_data, partial=True)
+                if cfg_ser.is_valid(raise_exception=True):
+                    cfg_ser.save()
 
         return instance
 
@@ -189,10 +198,13 @@ class WebhookMessageSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"telegram_number": "telegram_number does not match client config."}
             )
-        if channel_id and client.channel_id != channel_id.strip():
+        
+        channel_id_val = channel_id.strip() if channel_id else None
+        if channel_id_val and not client.configs.filter(channel_id=channel_id_val).exists():
             raise serializers.ValidationError(
-                {"channel_id": "channel_id does not match client config."}
+                {"channel_id": "channel_id does not match any config for this client."}
             )
+            
         if (
             broker_account_number
             and client.broker_account_number != broker_account_number.strip()
@@ -211,4 +223,6 @@ class WebhookMessageSerializer(serializers.ModelSerializer):
                 attrs[field] = value.strip()
 
         attrs["client"] = client
+        if channel_id_val:
+            attrs["channel_id"] = channel_id_val
         return attrs
